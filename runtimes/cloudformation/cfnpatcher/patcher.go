@@ -27,12 +27,15 @@ func shouldSkip(info *kilt.TargetInfo, configuration *Configuration, hints *Inst
 	return (configuration.OptIn && !isForceIncluded && !hints.HasGlobalInclude) || (!configuration.OptIn && isExcluded)
 }
 
-func applyTaskDefinitionPatch(ctx context.Context, name string, resource *gabs.Container, configuration *Configuration, hints *InstrumentationHints) (*gabs.Container, error) {
+func applyTaskDefinitionPatch(ctx context.Context, name string, resource *gabs.Container, configuration *Configuration, hints *InstrumentationHints, iamRoleToResource map[string]*gabs.Container, executionRole string) (*gabs.Container, error) {
 	l := log.Ctx(ctx)
 
 	successes := 0
 	containers := make(map[string]kilt.BuildResource)
 	k := kiltapi.NewKiltFromHoconWithConfig(configuration.Kilt, configuration.RecipeConfig)
+
+	patchExecutionRole := true
+
 	if resource.Exists("Properties", "ContainerDefinitions") {
 		for _, container := range resource.S("Properties", "ContainerDefinitions").Children() {
 			info := extractContainerInfo(ctx, resource, name, container, configuration)
@@ -55,6 +58,18 @@ func applyTaskDefinitionPatch(ctx context.Context, name string, resource *gabs.C
 
 			for _, appendResource := range patch.Resources {
 				containers[appendResource.Name] = appendResource
+			}
+
+			if executionRoleResource, ok := iamRoleToResource[executionRole]; ok && patchExecutionRole {
+				err = appendPolicies(executionRoleResource, patch.ExecutionPolicies)
+				if err != nil {
+					return nil, fmt.Errorf("could not append execution policies for task definition: %s", name)
+				} else {
+					delete(iamRoleToResource, executionRole)
+					patchExecutionRole = false
+				}
+			} else if !ok {
+				l.Warn().Str("resource", name).Msg("could not find the related execution role")
 			}
 		}
 		err := appendContainers(resource, containers, configuration.ImageAuthSecret, configuration.LogGroup, name)
@@ -141,8 +156,8 @@ func applyContainerDefinitionPatch(ctx context.Context, container *gabs.Containe
 		_, err = container.Set([]interface{}{}, "Environment")
 
 		if err != nil {
-		return fmt.Errorf("could not add environment variable container: %w", err)
-	}
+			return fmt.Errorf("could not add environment variable container: %w", err)
+		}
 	}
 
 	for k, v := range patch.EnvironmentVariables {
@@ -224,4 +239,31 @@ func prepareLogConfiguration(taskName string, logGroup string) map[string]interf
 	}
 
 	return config
+}
+
+func appendPolicies(resource *gabs.Container, policies []kilt.PolicyResource) error {
+	for _, inject := range policies {
+		statement := map[string]interface{}{
+			"Effect":   inject.Effect,
+			"Action":   inject.Action,
+			"Resource": inject.Resource,
+		}
+
+		policyDocument := map[string]interface{}{
+			"Version":   inject.Version,
+			"Statement": statement,
+		}
+
+		policy := map[string]interface{}{
+			"PolicyName":     inject.Name,
+			"PolicyDocument": policyDocument,
+		}
+
+		err := resource.ArrayAppend(policy, "Properties", "Policies")
+		if err != nil {
+			return fmt.Errorf("could not inject policy %s: %w", inject.Name, err)
+		}
+	}
+
+	return nil
 }

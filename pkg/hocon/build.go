@@ -46,5 +46,29 @@ func extractBuild(config *configuration.Config) (*kilt.Build, error) {
 		}
 	}
 
+	if config.IsArray("build.execution_policies") {
+		policies := config.GetValue("build.execution_policies").GetArray()
+
+		for k, m := range policies {
+			if m.IsObject() {
+				policy := m.GetObject()
+
+				resource := kilt.PolicyResource{
+					Name:     policy.GetKey("name").GetString(),
+					Version:  policy.GetKey("version").GetString(),
+					Effect:   policy.GetKey("effect").GetString(),
+					Action:   policy.GetKey("action").GetStringList(),
+					Resource: policy.GetKey("resource").GetStringList(),
+				}
+
+				if resource.Version == "" || resource.Effect == "" || len(resource.Action) == 0 || len(resource.Resource) == 0 {
+					return nil, fmt.Errorf("error at build.execution_policies.%d: version, effect, action, and resource are all required ", k)
+				}
+
+				b.ExecutionPolicies = append(b.ExecutionPolicies, resource)
+			}
+		}
+	}
+
 	return b, nil
 }

@@ -29,7 +29,16 @@ type Build struct {
 	Command              []string
 	EnvironmentVariables map[string]string
 
-	Resources []BuildResource
+	Resources            []BuildResource
+	ExecutionPolicies    []PolicyResource
+}
+
+type PolicyResource struct {
+	Name     string
+	Version  string
+	Effect   string
+	Action   []string
+	Resource []string
 }
 
 type RuntimeUpload struct {

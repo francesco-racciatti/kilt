@@ -23,6 +23,8 @@ type InstrumentationHints struct {
 	HasGlobalInclude       bool
 }
 
+var Empty struct{}
+
 const KiltIgnoreTag = "kilt-ignore"
 const KiltIncludeTag = "kilt-include"
 const KiltIgnoreContainersTag = "kilt-ignore-containers"
@@ -62,24 +64,40 @@ func Patch(ctx context.Context, configuration *Configuration, fragment []byte) (
 		return nil, err
 	}
 
+	taskDefinitionToResource := make(map[string]*gabs.Container)
+	iamRoleToResource := make(map[string]*gabs.Container)
+
 	for name, resource := range template.S("Resources").ChildrenMap() {
 		if matchFargate(resource) {
-			tags := getTags(resource)
+			taskDefinitionToResource[name] = resource
+		}
+		if isIamRole(resource) {
+			iamRoleToResource[name] = resource
+		}
+	}
 
-			if isIgnored(tags, configuration.OptIn) {
-				l.Info().Str("resource", name).Msg("ignored resource due to tag")
-				continue
-			}
-			l.Info().Str("resource", name).Msg("patching task definition")
-			if err != nil {
-				l.Error().Err(err).Str("resource", name).Msg("could not generate kilt instructions")
-				continue
-			}
-			hints := extractHintsFromTags(tags)
-			_, err = applyTaskDefinitionPatch(ctx, name, resource, configuration, hints)
-			if err != nil {
-				l.Error().Err(err).Str("resource", name).Msgf("could not patch resource")
-			}
+	for name, resource := range taskDefinitionToResource {
+		tags := getTags(resource)
+
+		if isIgnored(tags, configuration.OptIn) {
+			l.Info().Str("resource", name).Msg("ignored resource due to tag")
+			continue
+		}
+		l.Info().Str("resource", name).Msg("patching task definition")
+		if err != nil {
+			l.Error().Err(err).Str("resource", name).Msg("could not generate kilt instructions")
+			continue
+		}
+
+		executionRole, ok := getExecutionRole(resource)
+		if !ok {
+			l.Warn().Str("resource", name).Msg("no execution role was specified")
+		}
+
+		hints := extractHintsFromTags(tags)
+		_, err = applyTaskDefinitionPatch(ctx, name, resource, configuration, hints, iamRoleToResource, executionRole)
+		if err != nil {
+			l.Error().Err(err).Str("resource", name).Msgf("could not patch resource")
 		}
 	}
 

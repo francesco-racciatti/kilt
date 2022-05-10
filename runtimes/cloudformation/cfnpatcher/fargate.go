@@ -24,6 +24,15 @@ func isTaskDefinition(resource *gabs.Container) bool {
 	return hasType(resource, "AWS::ECS::TaskDefinition")
 }
 
+func isIamRole(resource *gabs.Container) bool {
+	return hasType(resource, "AWS::IAM::Role")
+}
+
+func getExecutionRole(resource *gabs.Container) (string, bool) {
+	k, ok := resource.S("Properties", "ExecutionRoleArn", "Ref").Data().(string)
+	return k, ok
+}
+
 func hasType(resource *gabs.Container, resourceType string) bool {
 	exists := resource.Exists("Type")
 	if !exists {
